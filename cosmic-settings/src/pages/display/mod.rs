@@ -106,6 +106,10 @@ pub enum Message {
         /// Available outputs from cosmic-randr.
         randr: Arc<Result<List, cosmic_randr_shell::Error>>,
     },
+    /// Set the single tile max width text value for the active display.
+    SingleTileMaxWidth(String),
+    /// Save the single tile max width to config.
+    SaveSingleTileMaxWidth(bool),
     Surface(surface::Action),
 }
 
@@ -151,6 +155,12 @@ pub struct Page {
     dialog_countdown: usize,
     show_display_options: bool,
     adjusted_scale: u32,
+    #[cfg(feature = "cosmic-comp-config")]
+    comp_config: Option<cosmic_config::Config>,
+    #[cfg(feature = "cosmic-comp-config")]
+    single_tile_max_widths: Vec<cosmic_comp_config::workspace::SingleTileMaxWidthEntry>,
+    #[cfg(feature = "cosmic-comp-config")]
+    single_tile_max_width_text: String,
 }
 
 impl Default for Page {
@@ -173,6 +183,21 @@ impl Default for Page {
             dialog_countdown: 0,
             show_display_options: true,
             adjusted_scale: 0,
+            #[cfg(feature = "cosmic-comp-config")]
+            comp_config: cosmic_config::Config::new("com.system76.CosmicComp", 1).ok(),
+            #[cfg(feature = "cosmic-comp-config")]
+            single_tile_max_widths: cosmic_config::Config::new("com.system76.CosmicComp", 1)
+                .ok()
+                .and_then(|c| {
+                    cosmic_config::ConfigGet::get::<Vec<cosmic_comp_config::workspace::SingleTileMaxWidthEntry>>(
+                        &c,
+                        "single_tile_max_widths",
+                    )
+                    .ok()
+                })
+                .unwrap_or_default(),
+            #[cfg(feature = "cosmic-comp-config")]
+            single_tile_max_width_text: String::new(),
         }
     }
 }
@@ -654,6 +679,58 @@ impl Page {
                 self.refreshing_page.store(false, Ordering::SeqCst);
             }
 
+            Message::SingleTileMaxWidth(value) => {
+                #[cfg(feature = "cosmic-comp-config")]
+                {
+                    self.single_tile_max_width_text = value;
+                }
+            }
+
+            Message::SaveSingleTileMaxWidth(save) => {
+                #[cfg(feature = "cosmic-comp-config")]
+                if save {
+                    let max_width: u32 = self.single_tile_max_width_text.parse().unwrap_or(0);
+                    if let Some(output) = self.list.outputs.get(self.active_display) {
+                        if max_width > 0 {
+                            if let Some(entry) = self
+                                .single_tile_max_widths
+                                .iter_mut()
+                                .find(|e| e.output == output.name)
+                            {
+                                entry.max_width = max_width;
+                            } else {
+                                self.single_tile_max_widths.push(
+                                    cosmic_comp_config::workspace::SingleTileMaxWidthEntry {
+                                        output: output.name.clone(),
+                                        max_width,
+                                    },
+                                );
+                            }
+                        } else {
+                            self.single_tile_max_widths.retain(|e| e.output != output.name);
+                        }
+
+                        if let Some(ref config) = self.comp_config {
+                            if let Err(err) = cosmic_config::ConfigSet::set(
+                                config,
+                                "single_tile_max_widths",
+                                &self.single_tile_max_widths,
+                            ) {
+                                tracing::error!(
+                                    ?err,
+                                    "Failed to set config 'single_tile_max_widths'"
+                                );
+                            }
+                        }
+                    }
+                    self.single_tile_max_width_text = if max_width > 0 {
+                        format!("{max_width}")
+                    } else {
+                        String::new()
+                    };
+                }
+            }
+
             Message::Surface(a) => {
                 return cosmic::task::message(crate::app::Message::Surface(a));
             }
@@ -899,6 +976,22 @@ impl Page {
         if self.mirror_menu.selected.is_none() {
             // If mirror menu is not set, set it to don't mirror.
             self.mirror_menu.selected = Some(Mirroring::Disable);
+        }
+
+        // Update single tile max width text for this output
+        #[cfg(feature = "cosmic-comp-config")]
+        if let Some(output) = self.list.outputs.get(output_id) {
+            let max_w = self
+                .single_tile_max_widths
+                .iter()
+                .find(|e| e.output == output.name)
+                .map(|e| e.max_width)
+                .unwrap_or(0);
+            self.single_tile_max_width_text = if max_w > 0 {
+                format!("{max_w}")
+            } else {
+                String::new()
+            };
         }
     }
 
@@ -1237,6 +1330,7 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
         scale = fl!("display", "scale");
         additional_scale_options = fl!("display", "additional-scale-options");
         orientation = fl!("orientation");
+        single_tile_max_width = fl!("single-tile-max-width");
         enable_label = fl!("display", "enable");
         options_label = fl!("display", "options");
         mirroring_label = fl!("mirroring");
@@ -1346,6 +1440,19 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
                         ),
                     ),
                 ]);
+
+                // Single tile max width input
+                #[cfg(feature = "cosmic-comp-config")]
+                items.push(widget::settings::item(
+                    &descriptions[single_tile_max_width],
+                    widget::editable_input("", &page.single_tile_max_width_text, false, |editing| {
+                        Message::SaveSingleTileMaxWidth(!editing)
+                    })
+                    .select_on_focus(true)
+                    .on_input(Message::SingleTileMaxWidth)
+                    .on_submit(|_| Message::SaveSingleTileMaxWidth(true))
+                    .width(Length::Fixed(80.0)),
+                ));
 
                 items
             });
