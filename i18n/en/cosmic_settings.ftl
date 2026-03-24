@@ -566,6 +566,8 @@ orientation = Orientation
     .rotate-180 = Rotate 180°
     .rotate-270 = Rotate 270°
 
+single-tile-max-width = Single Tile Max Width
+
 vrr = Variable refresh rate
     .enabled = Enabled
     .force = Always
