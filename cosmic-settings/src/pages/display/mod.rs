@@ -1451,7 +1451,7 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
                     .select_on_focus(true)
                     .on_input(Message::SingleTileMaxWidth)
                     .on_submit(|_| Message::SaveSingleTileMaxWidth(true))
-                    .width(Length::Fixed(80.0)),
+                    .width(Length::Fixed(120.0)),
                 ));
 
                 items
